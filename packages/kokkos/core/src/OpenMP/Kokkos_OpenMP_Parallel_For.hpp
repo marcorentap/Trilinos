@@ -20,6 +20,7 @@
 #include <omp.h>
 #include <OpenMP/Kokkos_OpenMP_Instance.hpp>
 #include <KokkosExp_MDRangePolicy.hpp>
+#include <exception>
 
 //----------------------------------------------------------------------------
 //----------------------------------------------------------------------------
@@ -106,7 +107,48 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
     }
   }
 
+  /* BEGIN Custom parallel for with thread control */
+  template <class Policy>
+  std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
+                                Kokkos::Dynamic>::value>
+  execute_parallel(const int thread_count) const {
+    ::std::cerr << "custom dynamic execute_parallel with " << thread_count
+                << " threads\n";
+    // prevent bug in NVHPC 21.9/CUDA 11.4 (entering zero iterations loop)
+    if (m_policy.begin() >= m_policy.end()) return;
+#pragma omp parallel for schedule(dynamic KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
+    num_threads(thread_count)
+    KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+    for (auto iwork = m_policy.begin(); iwork < m_policy.end(); ++iwork) {
+      exec_work(m_functor, iwork);
+    }
+  }
+
+  template <class Policy>
+  std::enable_if_t<!std::is_same<typename Policy::schedule_type::type,
+                                 Kokkos::Dynamic>::value>
+  execute_parallel(const int thread_count) const {
+    ::std::cerr << "custom static execute_parallel with " << thread_count
+                << " threads\n";
+
+// Specifying an chunksize with GCC compiler leads to performance regression
+// with static schedule.
+#ifdef KOKKOS_COMPILER_GNU
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+#else
+#pragma omp parallel for schedule(static KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
+    num_threads(thread_count)
+#endif
+    KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+    for (auto iwork = m_policy.begin(); iwork < m_policy.end(); ++iwork) {
+      exec_work(m_functor, iwork);
+    }
+  }
+
+  /* END Custom parallel for with thread control */
+
  public:
+  // ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP>
   inline void execute() const {
     if (execute_in_serial(m_policy.space())) {
       exec_range(m_functor, m_policy.begin(), m_policy.end());
@@ -145,9 +187,56 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
 #endif
   }
 
+  inline void execute(const int num_threads) const {
+    if (execute_in_serial(m_policy.space())) {
+      exec_range(m_functor, m_policy.begin(), m_policy.end());
+      return;
+    }
+
+#ifndef KOKKOS_INTERNAL_DISABLE_NATIVE_OPENMP
+    execute_parallel<Policy>(num_threads);
+#else
+    throw std::runtime_exception("wtf");
+    constexpr bool is_dynamic =
+        std::is_same<typename Policy::schedule_type::type,
+                     Kokkos::Dynamic>::value;
+#pragma omp parallel num_threads(m_instance->thread_pool_size())
+    {
+      HostThreadTeamData& data = *(m_instance->get_thread_data());
+
+      data.set_work_partition(m_policy.end() - m_policy.begin(),
+                              m_policy.chunk_size());
+
+      if (is_dynamic) {
+        // Make sure work partition is set before stealing
+        if (data.pool_rendezvous()) data.pool_rendezvous_release();
+      }
+
+      std::pair<int64_t, int64_t> range(0, 0);
+
+      do {
+        range = is_dynamic ? data.get_work_stealing_chunk()
+                           : data.get_work_partition();
+
+        exec_range(m_functor, range.first + m_policy.begin(),
+                   range.second + m_policy.begin());
+
+      } while (is_dynamic && 0 <= range.first);
+    }
+#endif
+  }
+
   inline ParallelFor(const FunctorType& arg_functor, Policy arg_policy)
       : m_instance(nullptr), m_functor(arg_functor), m_policy(arg_policy) {
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_3
+    if (t_openmp_instance) {
+      m_instance = t_openmp_instance;
+    } else {
+      m_instance = arg_policy.space().impl_internal_space_instance();
+    }
+#else
     m_instance = arg_policy.space().impl_internal_space_instance();
+#endif
   }
 };
 
@@ -201,6 +290,7 @@ class ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>,
   }
 
  public:
+  // ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>, Kokkos::OpenMP>
   inline void execute() const {
 #ifndef KOKKOS_COMPILER_INTEL
     if (execute_in_serial(m_iter.m_rp.space())) {
@@ -243,9 +333,16 @@ class ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>,
 
   inline ParallelFor(const FunctorType& arg_functor, MDRangePolicy arg_policy)
       : m_instance(nullptr), m_iter(arg_policy, arg_functor) {
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_3
+    if (t_openmp_instance) {
+      m_instance = t_openmp_instance;
+    } else {
+      m_instance = arg_policy.space().impl_internal_space_instance();
+    }
+#else
     m_instance = arg_policy.space().impl_internal_space_instance();
+#endif
   }
-
   template <typename Policy, typename Functor>
   static int max_tile_size_product(const Policy&, const Functor&) {
     /**
@@ -325,6 +422,7 @@ class ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>,
   }
 
  public:
+  // ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>, Kokkos::OpenMP>
   inline void execute() const {
     enum { is_dynamic = std::is_same<SchedTag, Kokkos::Dynamic>::value };
 
@@ -394,7 +492,15 @@ class ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>,
         m_shmem_size(arg_policy.scratch_size(0) + arg_policy.scratch_size(1) +
                      FunctorTeamShmemSize<FunctorType>::value(
                          arg_functor, arg_policy.team_size())) {
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_3
+    if (t_openmp_instance) {
+      m_instance = t_openmp_instance;
+    } else {
+      m_instance = arg_policy.space().impl_internal_space_instance();
+    }
+#else
     m_instance = arg_policy.space().impl_internal_space_instance();
+#endif
   }
 };
 
@@ -408,3 +514,4 @@ class ParallelFor<FunctorType, Kokkos::TeamPolicy<Properties...>,
 #undef KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE
 
 #endif /* KOKKOS_OPENMP_PARALLEL_FOR_HPP */
+

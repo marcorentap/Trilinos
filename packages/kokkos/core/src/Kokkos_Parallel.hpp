@@ -39,6 +39,7 @@ static_assert(false,
 #include <cstddef>
 #include <type_traits>
 #include <typeinfo>
+#include <iostream>
 
 //----------------------------------------------------------------------------
 //----------------------------------------------------------------------------
@@ -169,6 +170,49 @@ template <class FunctorType>
 inline void parallel_for(const size_t work_count, const FunctorType& functor) {
   ::Kokkos::parallel_for("", work_count, functor);
 }
+
+/* BEGIN Custom parallel for with thread control */
+template <
+    class ExecPolicy, class FunctorType,
+    class Enable = std::enable_if_t<is_execution_policy<ExecPolicy>::value>>
+inline void parallel_for(const std::string& str, const ExecPolicy& policy,
+                         const int thread_count, const FunctorType& functor) {
+  ::std::cerr << "custom parfor 1 with " << thread_count << " threads\n";
+  // TODO: Call profiling hooks
+  ExecPolicy inner_policy = policy;
+  Impl::ParallelFor<FunctorType, ExecPolicy> closure(functor, inner_policy);
+  closure.execute(thread_count);
+}
+
+template <class ExecPolicy, class FunctorType>
+inline void parallel_for(
+    const ExecPolicy& policy, const int thread_count,
+    const FunctorType& functor,
+    std::enable_if_t<is_execution_policy<ExecPolicy>::value>* = nullptr) {
+  ::std::cerr << "custom parfor 2 with " << thread_count << " threads\n";
+  ::Kokkos::parallel_for("", policy, thread_count, functor);
+}
+
+template <class FunctorType>
+inline void parallel_for(const std::string& str, const size_t work_count,
+                         const int thread_count, const FunctorType& functor) {
+  ::std::cerr << "custom parfor 3 with " << thread_count << " threads\n";
+
+  using execution_space =
+      typename Impl::FunctorPolicyExecutionSpace<FunctorType,
+                                                 void>::execution_space;
+  using policy            = RangePolicy<execution_space>;
+  policy execution_policy = policy(0, work_count);
+  ::Kokkos::parallel_for(str, execution_policy, thread_count, functor);
+}
+
+template <class FunctorType>
+inline void parallel_for(const size_t work_count, const int thread_count,
+                         const FunctorType& functor) {
+  ::std::cerr << "custom parfor 4 with " << thread_count << " threads\n";
+  ::Kokkos::parallel_for("", work_count, thread_count, functor);
+}
+/* END Custom parallel for with thread control */
 
 }  // namespace Kokkos
 
@@ -496,3 +540,4 @@ struct FunctorTeamShmemSize<FunctorType, true, true> {
 //----------------------------------------------------------------------------
 
 #endif /* KOKKOS_PARALLEL_HPP */
+
