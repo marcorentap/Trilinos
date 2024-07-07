@@ -112,8 +112,8 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
   std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
                                 Kokkos::Dynamic>::value>
   execute_parallel(const int thread_count) const {
-    ::std::cerr << "custom dynamic execute_parallel with " << thread_count
-                << " threads\n";
+    // ::std::cerr << "custom dynamic execute_parallel with " << thread_count
+                // << " threads\n";
     // prevent bug in NVHPC 21.9/CUDA 11.4 (entering zero iterations loop)
     if (m_policy.begin() >= m_policy.end()) return;
 #pragma omp parallel for schedule(dynamic KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
@@ -128,8 +128,8 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
   std::enable_if_t<!std::is_same<typename Policy::schedule_type::type,
                                  Kokkos::Dynamic>::value>
   execute_parallel(const int thread_count) const {
-    ::std::cerr << "custom static execute_parallel with " << thread_count
-                << " threads\n";
+    // ::std::cerr << "custom static execute_parallel with " << thread_count
+                // << " threads\n";
 
 // Specifying an chunksize with GCC compiler leads to performance regression
 // with static schedule.

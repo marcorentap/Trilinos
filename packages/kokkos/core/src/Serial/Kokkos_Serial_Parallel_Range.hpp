@@ -48,6 +48,7 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::Serial> {
   }
 
  public:
+  inline void execute(const int thread_count) { execute(); }
   inline void execute() const {
     this->template exec<typename Policy::work_tag>();
   }
@@ -95,6 +96,7 @@ class ParallelReduce<CombinedFunctorReducerType, Kokkos::RangePolicy<Traits...>,
   }
 
  public:
+  inline void execute(const int thread_count) { execute(); }
   inline void execute() const {
     const size_t pool_reduce_size =
         m_functor_reducer.get_reducer().value_size();
@@ -179,6 +181,7 @@ class ParallelScan<FunctorType, Kokkos::RangePolicy<Traits...>,
   }
 
  public:
+  inline void execute(const int thread_count) { execute(); }
   inline void execute() const {
     const typename Analysis::Reducer& final_reducer =
         m_functor_reducer.get_reducer();
@@ -246,6 +249,7 @@ class ParallelScanWithTotal<FunctorType, Kokkos::RangePolicy<Traits...>,
   }
 
  public:
+  inline void execute(const int num_threads) { execute(); }
   inline void execute() {
     const size_t pool_reduce_size =
         m_functor_reducer.get_reducer().value_size();

@@ -256,7 +256,7 @@ static void spmv_beta_no_transpose(const execution_space& exec, Handle* handle,
                                    typename YVector::const_value_type& alpha,
                                    const AMatrix& A, const XVector& x,
                                    typename YVector::const_value_type& beta,
-                                   const YVector& y) {
+                                   const YVector& y, const int num_threads) {
   typedef typename AMatrix::non_const_ordinal_type ordinal_type;
 
   if (A.numRows() <= static_cast<ordinal_type>(0)) {
@@ -365,18 +365,38 @@ static void spmv_beta_no_transpose(const execution_space& exec, Handle* handle,
   bool use_static_schedule  = handle->force_static_schedule;
   SPMV_Functor<execution_space, AMatrix, XVector, YVector, dobeta, conjugate>
       func(alpha, A, x, beta, y, 1);
-  if (((A.nnz() > 10000000) || use_dynamic_schedule) && !use_static_schedule)
-    Kokkos::parallel_for(
-        "KokkosSparse::spmv<NoTranspose,Dynamic>",
-        Kokkos::RangePolicy<execution_space, Kokkos::Schedule<Kokkos::Dynamic>>(
-            exec, 0, A.numRows()),
-        func);
-  else
-    Kokkos::parallel_for(
-        "KokkosSparse::spmv<NoTranspose,Static>",
-        Kokkos::RangePolicy<execution_space, Kokkos::Schedule<Kokkos::Static>>(
-            exec, 0, A.numRows()),
-        func);
+  if (num_threads) {
+    if (((A.nnz() > 10000000) || use_dynamic_schedule) && !use_static_schedule)
+      Kokkos::parallel_for(
+          "KokkosSparse::spmv<NoTranspose,Dynamic>",
+          Kokkos::RangePolicy<execution_space,
+                              Kokkos::Schedule<Kokkos::Dynamic>>(exec, 0,
+                                                                 A.numRows()),
+          num_threads, func);
+    else
+      Kokkos::parallel_for(
+          "KokkosSparse::spmv<NoTranspose,Static>",
+          Kokkos::RangePolicy<execution_space,
+                              Kokkos::Schedule<Kokkos::Static>>(exec, 0,
+                                                                A.numRows()),
+          num_threads, func);
+
+  } else {
+    if (((A.nnz() > 10000000) || use_dynamic_schedule) && !use_static_schedule)
+      Kokkos::parallel_for(
+          "KokkosSparse::spmv<NoTranspose,Dynamic>",
+          Kokkos::RangePolicy<execution_space,
+                              Kokkos::Schedule<Kokkos::Dynamic>>(exec, 0,
+                                                                 A.numRows()),
+          func);
+    else
+      Kokkos::parallel_for(
+          "KokkosSparse::spmv<NoTranspose,Static>",
+          Kokkos::RangePolicy<execution_space,
+                              Kokkos::Schedule<Kokkos::Static>>(exec, 0,
+                                                                A.numRows()),
+          func);
+  }
 }
 
 // spmv_beta_no_transpose: version for GPU execution spaces (TeamPolicy used)
@@ -447,7 +467,7 @@ static void spmv_beta_transpose(const execution_space& exec,
                                 typename YVector::const_value_type& alpha,
                                 const AMatrix& A, const XVector& x,
                                 typename YVector::const_value_type& beta,
-                                const YVector& y) {
+                                const YVector& y, const int num_threads = 0) {
   using ordinal_type = typename AMatrix::non_const_ordinal_type;
   using size_type    = typename AMatrix::non_const_size_type;
 
@@ -525,7 +545,7 @@ static void spmv_beta_transpose(const execution_space& exec,
   typename AMatrix::const_ordinal_type nrow = A.numRows();
   Kokkos::parallel_for("KokkosSparse::spmv<Transpose>",
                        Kokkos::RangePolicy<execution_space>(exec, 0, nrow),
-                       OpType(alpha, A, x, y));
+                       num_threads, OpType(alpha, A, x, y));
 }
 
 // spmv_beta_transpose: version for GPU execution spaces (TeamPolicy used)
@@ -537,7 +557,7 @@ static void spmv_beta_transpose(const execution_space& exec,
                                 typename YVector::const_value_type& alpha,
                                 const AMatrix& A, const XVector& x,
                                 typename YVector::const_value_type& beta,
-                                const YVector& y) {
+                                const YVector& y, const int num_threads) {
   using ordinal_type = typename AMatrix::non_const_ordinal_type;
   using size_type    = typename AMatrix::non_const_size_type;
 
@@ -589,7 +609,7 @@ static void spmv_beta_transpose(const execution_space& exec,
   Kokkos::parallel_for("KokkosSparse::spmv<Transpose>",
                        Kokkos::TeamPolicy<execution_space>(
                            exec, nteams, team_size, vector_length),
-                       op);
+                       num_threads, op);
 }
 
 template <class execution_space, class Handle, class AMatrix, class XVector,
@@ -599,7 +619,7 @@ static void spmv_beta(const execution_space& exec, Handle* handle,
                       typename YVector::const_value_type& alpha,
                       const AMatrix& A, const XVector& x,
                       typename YVector::const_value_type& beta,
-                      const YVector& y) {
+                      const YVector& y, const int num_threads = 0) {
   if (mode[0] == NoTranspose[0]) {
     if (handle->algo == SPMV_MERGE_PATH ||
         handle->algo == SPMV_NATIVE_MERGE_PATH) {
@@ -607,23 +627,25 @@ static void spmv_beta(const execution_space& exec, Handle* handle,
           exec, mode, alpha, A, x, beta, y);
     } else {
       spmv_beta_no_transpose<execution_space, Handle, AMatrix, XVector, YVector,
-                             dobeta, false>(exec, handle, alpha, A, x, beta, y);
+                             dobeta, false>(exec, handle, alpha, A, x, beta, y,
+                                            num_threads);
     }
   } else if (mode[0] == Conjugate[0]) {
     if (handle->algo == SPMV_MERGE_PATH ||
         handle->algo == SPMV_NATIVE_MERGE_PATH) {
       SpmvMergeHierarchical<execution_space, AMatrix, XVector, YVector>::spmv(
-          exec, mode, alpha, A, x, beta, y);
+          exec, mode, alpha, A, x, beta, y, num_threads);
     } else {
       spmv_beta_no_transpose<execution_space, Handle, AMatrix, XVector, YVector,
-                             dobeta, true>(exec, handle, alpha, A, x, beta, y);
+                             dobeta, true>(exec, handle, alpha, A, x, beta, y,
+                                           num_threads);
     }
   } else if (mode[0] == Transpose[0]) {
     spmv_beta_transpose<execution_space, AMatrix, XVector, YVector, dobeta,
-                        false>(exec, alpha, A, x, beta, y);
+                        false>(exec, alpha, A, x, beta, y, num_threads);
   } else if (mode[0] == ConjugateTranspose[0]) {
     spmv_beta_transpose<execution_space, AMatrix, XVector, YVector, dobeta,
-                        true>(exec, alpha, A, x, beta, y);
+                        true>(exec, alpha, A, x, beta, y, num_threads);
   } else {
     std::stringstream ss;
     ss << __FILE__ << ":" << __LINE__ << " Invalid transpose mode " << mode

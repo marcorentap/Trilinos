@@ -305,7 +305,7 @@ struct SpmvMergeHierarchical {
   static void spmv(const ExecutionSpace& space, const char mode[],
                    const y_value_type& alpha, const AMatrix& A,
                    const XVector& x, const y_value_type& beta,
-                   const YVector& y) {
+                   const YVector& y, const int num_threads = 0) {
     static_assert(XVector::rank == 1, "");
     static_assert(YVector::rank == 1, "");
 

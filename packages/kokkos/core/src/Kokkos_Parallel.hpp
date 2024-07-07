@@ -177,10 +177,16 @@ template <
     class Enable = std::enable_if_t<is_execution_policy<ExecPolicy>::value>>
 inline void parallel_for(const std::string& str, const ExecPolicy& policy,
                          const int thread_count, const FunctorType& functor) {
-  ::std::cerr << "custom parfor 1 with " << thread_count << " threads\n";
+  // ::std::cerr << "custom parfor 1 with " << thread_count << " threads\n";
   // TODO: Call profiling hooks
   ExecPolicy inner_policy = policy;
   Impl::ParallelFor<FunctorType, ExecPolicy> closure(functor, inner_policy);
+
+  if (std::is_same<ExecPolicy, Kokkos::Serial>::value) {
+    closure.execute();
+    return;
+  }
+
   closure.execute(thread_count);
 }
 
@@ -189,14 +195,14 @@ inline void parallel_for(
     const ExecPolicy& policy, const int thread_count,
     const FunctorType& functor,
     std::enable_if_t<is_execution_policy<ExecPolicy>::value>* = nullptr) {
-  ::std::cerr << "custom parfor 2 with " << thread_count << " threads\n";
+  // ::std::cerr << "custom parfor 2 with " << thread_count << " threads\n";
   ::Kokkos::parallel_for("", policy, thread_count, functor);
 }
 
 template <class FunctorType>
 inline void parallel_for(const std::string& str, const size_t work_count,
                          const int thread_count, const FunctorType& functor) {
-  ::std::cerr << "custom parfor 3 with " << thread_count << " threads\n";
+  // ::std::cerr << "custom parfor 3 with " << thread_count << " threads\n";
 
   using execution_space =
       typename Impl::FunctorPolicyExecutionSpace<FunctorType,
@@ -209,7 +215,7 @@ inline void parallel_for(const std::string& str, const size_t work_count,
 template <class FunctorType>
 inline void parallel_for(const size_t work_count, const int thread_count,
                          const FunctorType& functor) {
-  ::std::cerr << "custom parfor 4 with " << thread_count << " threads\n";
+  // ::std::cerr << "custom parfor 4 with " << thread_count << " threads\n";
   ::Kokkos::parallel_for("", work_count, thread_count, functor);
 }
 /* END Custom parallel for with thread control */
@@ -540,4 +546,3 @@ struct FunctorTeamShmemSize<FunctorType, true, true> {
 //----------------------------------------------------------------------------
 
 #endif /* KOKKOS_PARALLEL_HPP */
-
