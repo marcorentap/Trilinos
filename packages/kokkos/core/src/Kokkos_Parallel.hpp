@@ -178,16 +178,23 @@ template <
 inline void parallel_for(const std::string& str, const ExecPolicy& policy,
                          const int thread_count, const FunctorType& functor) {
   // ::std::cerr << "custom parfor 1 with " << thread_count << " threads\n";
-  // TODO: Call profiling hooks
+  uint64_t kpID = 0;
+
   ExecPolicy inner_policy = policy;
+  Kokkos::Tools::Impl::begin_parallel_for(inner_policy, functor, str, kpID);
+
+  Kokkos::Impl::shared_allocation_tracking_disable();
   Impl::ParallelFor<FunctorType, ExecPolicy> closure(functor, inner_policy);
+  Kokkos::Impl::shared_allocation_tracking_enable();
 
   if (std::is_same<ExecPolicy, Kokkos::Serial>::value) {
     closure.execute();
+    Kokkos::Tools::Impl::end_parallel_for(inner_policy, functor, str, kpID);
     return;
   }
 
   closure.execute(thread_count);
+  Kokkos::Tools::Impl::end_parallel_for(inner_policy, functor, str, kpID);
 }
 
 template <class ExecPolicy, class FunctorType>
