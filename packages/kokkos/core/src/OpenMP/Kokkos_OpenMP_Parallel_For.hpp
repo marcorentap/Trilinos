@@ -174,7 +174,7 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
 // Specifying an chunksize with GCC compiler leads to performance regression
 // with static schedule.
 #ifdef KOKKOS_COMPILER_GNU
-#pragma omp parallel for schedule(static) num_threads(n_threads)
+#pragma omp parallel for schedule(static) num_threads(thread_count)
 #else
 #pragma omp parallel for schedule(static KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
     num_threads(thread_count)
