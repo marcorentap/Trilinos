@@ -74,6 +74,7 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
     functor(WorkTag{}, iwork);
   }
 
+  /*
   template <class Policy>
   std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
                                 Kokkos::Dynamic>::value>
@@ -106,8 +107,47 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
       exec_work(m_functor, iwork);
     }
   }
+*/
 
   /* BEGIN Custom parallel for with thread control */
+  template <class Policy>
+  std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
+                                Kokkos::Dynamic>::value>
+  execute_parallel() const {
+    if (m_policy.end() - m_policy.begin() == 1) {
+      execute_parallel<Policy>(1);
+    } else {
+    if (m_policy.begin() >= m_policy.end()) return;
+  #pragma omp parallel for schedule(dynamic KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
+      num_threads(m_instance->thread_pool_size())
+      KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+      for (auto iwork = m_policy.begin(); iwork < m_policy.end(); ++iwork) {
+        exec_work(m_functor, iwork);
+      }
+    }
+  }
+
+  template <class Policy>
+  std::enable_if_t<!std::is_same<typename Policy::schedule_type::type,
+                                 Kokkos::Dynamic>::value>
+  execute_parallel() const {
+    if (m_policy.end() - m_policy.begin() == 1) {
+      execute_parallel<Policy>(1);
+    } else {
+  #ifdef KOKKOS_COMPILER_GNU
+  #pragma omp parallel for schedule(static) \
+      num_threads(m_instance->thread_pool_size())
+  #else
+  #pragma omp parallel for schedule(static KOKKOS_OPENMP_OPTIONAL_CHUNK_SIZE) \
+      num_threads(m_instance->thread_pool_size())
+  #endif
+      KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+      for (auto iwork = m_policy.begin(); iwork < m_policy.end(); ++iwork) {
+        exec_work(m_functor, iwork);
+      }
+    }
+  }
+
   template <class Policy>
   std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
                                 Kokkos::Dynamic>::value>
