@@ -219,20 +219,20 @@ class ParallelFor<FunctorType, Kokkos::RangePolicy<Traits...>, Kokkos::OpenMP> {
 #endif
   }
 
-  inline void execute(const int num_threads) const {
+  inline void execute(const int thread_count) const {
     if (execute_in_serial(m_policy.space())) {
       exec_range(m_functor, m_policy.begin(), m_policy.end());
       return;
     }
 
 #ifndef KOKKOS_INTERNAL_DISABLE_NATIVE_OPENMP
-    execute_parallel<Policy>(num_threads);
+    execute_parallel<Policy>(thread_count);
 #else
     throw std::runtime_exception("wtf");
     constexpr bool is_dynamic =
         std::is_same<typename Policy::schedule_type::type,
                      Kokkos::Dynamic>::value;
-#pragma omp parallel num_threads(m_instance->thread_pool_size())
+#pragma omp parallel num_threads(thread_count)
     {
       HostThreadTeamData& data = *(m_instance->get_thread_data());
 
@@ -321,6 +321,30 @@ class ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>,
     }
   }
 
+  template <class Policy>
+  typename std::enable_if_t<std::is_same<typename Policy::schedule_type::type,
+                                         Kokkos::Dynamic>::value>
+  execute_parallel(const int thread_count) const {
+#pragma omp parallel for schedule(dynamic, 1) \
+    num_threads(thread_count)
+    KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+    for (index_type iwork = 0; iwork < m_iter.m_rp.m_num_tiles; ++iwork) {
+      m_iter(iwork);
+    }
+  }
+
+  template <class Policy>
+  typename std::enable_if<!std::is_same<typename Policy::schedule_type::type,
+                                        Kokkos::Dynamic>::value>::type
+  execute_parallel(const int thread_count) const {
+#pragma omp parallel for schedule(static, 1) \
+    num_threads(thread_count)
+    KOKKOS_PRAGMA_IVDEP_IF_ENABLED
+    for (index_type iwork = 0; iwork < m_iter.m_rp.m_num_tiles; ++iwork) {
+      m_iter(iwork);
+    }
+  }
+
  public:
   // ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>, Kokkos::OpenMP>
   inline void execute() const {
@@ -339,6 +363,46 @@ class ParallelFor<FunctorType, Kokkos::MDRangePolicy<Traits...>,
                      Kokkos::Dynamic>::value;
 
 #pragma omp parallel num_threads(m_instance->thread_pool_size())
+    {
+      HostThreadTeamData& data = *(m_instance->get_thread_data());
+
+      data.set_work_partition(m_iter.m_rp.m_num_tiles, 1);
+
+      if (is_dynamic) {
+        // Make sure work partition is set before stealing
+        if (data.pool_rendezvous()) data.pool_rendezvous_release();
+      }
+
+      std::pair<int64_t, int64_t> range(0, 0);
+
+      do {
+        range = is_dynamic ? data.get_work_stealing_chunk()
+                           : data.get_work_partition();
+
+        exec_range(range.first, range.second);
+
+      } while (is_dynamic && 0 <= range.first);
+    }
+    // END #pragma omp parallel
+#endif
+
+  }
+  inline void execute(const int thread_count) const {
+#ifndef KOKKOS_COMPILER_INTEL
+    if (execute_in_serial(m_iter.m_rp.space())) {
+      exec_range(0, m_iter.m_rp.m_num_tiles);
+      return;
+    }
+#endif
+
+#ifndef KOKKOS_INTERNAL_DISABLE_NATIVE_OPENMP
+    execute_parallel<Policy>(thread_count);
+#else
+    constexpr bool is_dynamic =
+        std::is_same<typename Policy::schedule_type::type,
+                     Kokkos::Dynamic>::value;
+
+#pragma omp parallel num_threads(thread_count)
     {
       HostThreadTeamData& data = *(m_instance->get_thread_data());
 
